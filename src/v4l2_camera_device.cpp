@@ -218,13 +218,15 @@ std::string V4l2CameraDevice::getCameraName()
   return name;
 }
 
-int64_t V4l2CameraDevice::getTimeOffset()
+int64_t V4l2CameraDevice::getTimeOffset(clockid_t source_clock_id)
 {
-  timespec system_sample, monotonic_sample;
+  timespec system_sample, source_sample;
   clock_gettime(CLOCK_REALTIME, &system_sample);
-  clock_gettime(CLOCK_MONOTONIC_RAW, &monotonic_sample);
-  return (static_cast<int64_t>(system_sample.tv_sec * 1e9) - static_cast<int64_t>(monotonic_sample.tv_sec * 1e9)
-          + static_cast<int64_t>(system_sample.tv_nsec) - static_cast<int64_t>(monotonic_sample.tv_nsec));
+  clock_gettime(source_clock_id, &source_sample);
+  return (static_cast<int64_t>(system_sample.tv_sec * 1e9) -
+          static_cast<int64_t>(source_sample.tv_sec * 1e9) +
+          static_cast<int64_t>(system_sample.tv_nsec) -
+          static_cast<int64_t>(source_sample.tv_nsec));
 }
 
 void V4l2CameraDevice::setTSCOffset()
@@ -295,10 +297,19 @@ V4l2CameraDevice::capture() {
   }
 
   if (use_v4l2_buffer_timestamps_) {
-    buf_stamp = rclcpp::Time(static_cast<int64_t>(buf.timestamp.tv_sec) * 1e9
-                             + static_cast<int64_t>(buf.timestamp.tv_usec) * 1e3 
-                             + getTimeOffset() - tsc_offset_);
-  
+    const int64_t raw_timestamp_ns =
+      static_cast<int64_t>(buf.timestamp.tv_sec) * 1000000000LL +
+      static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
+
+    // Standard V4L2 drivers usually report buffer timestamps in CLOCK_MONOTONIC.
+    // The legacy TSC correction path is kept for platforms that do not expose
+    // the monotonic flag consistently.
+    if ((buf.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
+      buf_stamp = rclcpp::Time(raw_timestamp_ns + getTimeOffset(CLOCK_MONOTONIC));
+    } else {
+      buf_stamp = rclcpp::Time(raw_timestamp_ns + getTimeOffset(CLOCK_MONOTONIC_RAW)
+                               - tsc_offset_);
+    }
   }
   else {
     buf_stamp = rclcpp::Clock{RCL_SYSTEM_TIME}.now();

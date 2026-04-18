@@ -83,7 +83,7 @@ public:
 
   std::string getCameraName();
 
-  int64_t getTimeOffset();
+  int64_t getTimeOffset(clockid_t source_clock_id);
 
   void setTSCOffset();
 
